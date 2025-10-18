@@ -1,10 +1,28 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActivityType, ChannelType } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, entersState, VoiceConnectionStatus, AudioPlayerStatus } = require('@discordjs/voice');
+const { Client, GatewayIntentBits, EmbedBuilder, ActivityType } = require('discord.js');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 const ytdl = require('ytdl-core');
 const ytSearch = require('yt-search');
 const SpotifyWebApi = require('spotify-web-api-node');
-const fs = require('fs');
-const path = require('path');
+const express = require('express');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Express server for Render health checks
+app.use(express.json());
+
+app.get('/', (req, res) => {
+  res.json({ 
+    status: '🎵 Discord Music Bot Active!',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    guilds: client?.guilds?.cache?.size || 0
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'OK', time: new Date().toISOString() });
+});
 
 // Discord Client
 const client = new Client({
@@ -33,7 +51,7 @@ async function initSpotify() {
     spotifyApi.setAccessToken(data.body['access_token']);
     console.log('✅ Spotify API connected');
   } catch (error) {
-    console.log('❌ Spotify API error (optional)');
+    console.log('⚠️ Spotify API not configured (optional)');
   }
 }
 
@@ -72,7 +90,7 @@ async function getYouTubeTrackInfo(url) {
   }
 }
 
-// Get Spotify track info and find YouTube equivalent
+// Get Spotify track info
 async function getSpotifyTrackInfo(url) {
   try {
     const trackId = url.split('/track/')[1]?.split('?')[0];
@@ -81,7 +99,6 @@ async function getSpotifyTrackInfo(url) {
     const track = await spotifyApi.getTrack(trackId);
     const artists = track.body.artists.map(artist => artist.name).join(', ');
     
-    // Search on YouTube
     const searchQuery = `${track.body.name} ${artists} audio`;
     const ytResults = await searchYouTube(searchQuery);
     
@@ -116,17 +133,14 @@ async function playMusic(guildId, voiceChannel, textChannel, trackInfo) {
     const queue = getQueue(guildId);
     queue.push({ ...trackInfo, textChannel });
     
-    // Create voice connection
     const connection = joinVoiceChannel({
       channelId: voiceChannel.id,
       guildId: guildId,
       adapterCreator: voiceChannel.guild.voiceAdapterCreator,
     });
 
-    // Create audio player
     const player = createAudioPlayer();
     audioPlayers.set(guildId, player);
-
     connection.subscribe(player);
 
     // Send now playing embed
@@ -161,6 +175,7 @@ async function playMusic(guildId, voiceChannel, textChannel, trackInfo) {
       } else {
         connection.destroy();
         audioPlayers.delete(guildId);
+        textChannel.send('🏁 **Queue finished**\n\nUse `!play` to add more music!');
       }
     });
 
@@ -182,7 +197,7 @@ async function playMusic(guildId, voiceChannel, textChannel, trackInfo) {
 // Bot ready event
 client.once('ready', () => {
   console.log(`🎵 ${client.user.tag} is online!`);
-  client.user.setActivity('music | /play', { type: ActivityType.Listening });
+  client.user.setActivity('music | !play', { type: ActivityType.Listening });
   initSpotify();
 });
 
@@ -210,15 +225,12 @@ client.on('messageCreate', async (message) => {
     try {
       let trackInfo;
 
-      // YouTube URL
       if (query.includes('youtube.com/') || query.includes('youtu.be/')) {
         trackInfo = await getYouTubeTrackInfo(query);
       }
-      // Spotify URL
       else if (query.includes('spotify.com/track/')) {
         trackInfo = await getSpotifyTrackInfo(query);
       }
-      // Search query
       else {
         await message.reply(`🔍 Searching: "${query}"...`);
         const results = await searchYouTube(query + ' audio');
@@ -240,7 +252,6 @@ client.on('messageCreate', async (message) => {
       const queue = getQueue(message.guild.id);
       const isFirstInQueue = queue.length === 0;
 
-      // Add to queue message
       const queueEmbed = new EmbedBuilder()
         .setTitle('📥 Added to Queue')
         .setDescription(`**${trackInfo.title}**`)
@@ -254,7 +265,6 @@ client.on('messageCreate', async (message) => {
 
       await message.reply({ embeds: [queueEmbed] });
 
-      // Start playing if first in queue
       if (isFirstInQueue) {
         await playMusic(message.guild.id, message.member.voice.channel, message.channel, trackInfo);
       } else {
@@ -357,5 +367,9 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// Login to Discord
-client.login(process.env.DISCORD_TOKEN);
+// Start server and bot
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  client.login(process.env.DISCORD_TOKEN);
+  console.log('🎵 Discord Music Bot starting...');
+});
